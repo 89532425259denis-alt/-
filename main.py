@@ -13862,6 +13862,35 @@ async def generate_and_send(
                     doc_type=doc_type,
                 )
 
+            # ── Финальный Ultimate Quality Gate ──
+            ultimate_gate_caption = ""
+            try:
+                from quality_gate_ultimate import UltimateQualityGate
+
+                gate = UltimateQualityGate()
+                parts, fixes = await gate.check_and_fix(
+                    parts,
+                    topic=topic,
+                    subject=subject,
+                    model_key=model_key,
+                    chat_fn=chat_with_fallback,
+                    max_attempts=3,
+                )
+
+                # Обновляем blocks после правок
+                blocks = generate_structure(doc_type, parts, chapter_titles, topic=topic)
+                blocks = _apply_heading_format_to_blocks(blocks)
+
+                if fixes:
+                    print(f"[QUALITY] ✅ Применены правки: {fixes}")
+                    ultimate_gate_caption = f"\n🔧 <b>Автоправки:</b> " + ", ".join(fixes)
+                else:
+                    print("[QUALITY] ✅ Все проверки пройдены")
+                    ultimate_gate_caption = "\n✅ <b>Quality Gate пройден</b>"
+
+            except Exception as qe:
+                print(f"[QUALITY] Ошибка: {qe}")
+
             with open(final_path, "rb") as f:
                 final_bytes = f.read()
 
@@ -13919,6 +13948,7 @@ async def generate_and_send(
                 f"│ 🎓 Дисциплина: {relevance_status}\n"
                 f"│ 📑 Содержание: {toc_status}\n"
                 f"└─────────────────────────"
+                f"{ultimate_gate_caption}"
             )
 
             # ── Отправка в выбранном формате ──
