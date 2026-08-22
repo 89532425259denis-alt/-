@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+gost_configs.json
+plagiarism_cache.json
+rag_cache.json
