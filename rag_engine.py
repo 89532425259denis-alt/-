@@ -12,16 +12,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import json
 import os
 import re
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 import aiohttp
-import PyPDF2
 import fitz  # PyMuPDF
+
+try:
+    from error_logger import log_error
+except ImportError:
+    def log_error(*args, **kwargs):
+        pass
 
 # Кэш загруженных текстов (чтобы не качать одно и то же)
 _TEXT_CACHE: dict[str, str] = {}
@@ -66,7 +70,7 @@ class Chunk:
 
 
 async def fetch_pdf_by_doi(session: aiohttp.ClientSession, doi: str) -> bytes | None:
-    """Скачивает PDF по DOI (через Unpaywall / OA-серверы)."""
+    """Скачивает PDF по DOI через Unpaywall (Официальный Open Access API)."""
     if not doi:
         return None
 
@@ -75,7 +79,6 @@ async def fetch_pdf_by_doi(session: aiohttp.ClientSession, doi: str) -> bytes | 
     if cache_key in _TEXT_CACHE:
         return None  # уже есть текст, не нужно качать PDF
 
-    # 1. Пробуем через Unpaywall (бесплатный API)
     try:
         url = f"https://api.unpaywall.org/v2/{doi}?email=rag@example.com"
         async with session.get(url, timeout=10) as resp:
@@ -83,42 +86,26 @@ async def fetch_pdf_by_doi(session: aiohttp.ClientSession, doi: str) -> bytes | 
                 data = await resp.json()
                 oa_url = data.get("best_oa_location", {}).get("url")
                 if oa_url:
-                    # Скачиваем PDF
                     async with session.get(oa_url, timeout=30) as pdf_resp:
                         if pdf_resp.status == 200:
                             return await pdf_resp.read()
-    except Exception as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        log_error(stage="rag_fetch_pdf", message=f"Unpaywall error for {doi}: {e}", exc_info=e)
         print(f"[RAG] Unpaywall error for {doi}: {e}")
-
-    # 2. Пробуем через Sci-Hub (нелегально, но работает)
-    try:
-        url = f"https://sci-hub.se/{doi}"
-        async with session.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-            if resp.status == 200:
-                html = await resp.text()
-                # Ищем ссылку на PDF
-                m = re.search(r'<embed[^>]+src=["\']([^"\']+\.pdf)["\']', html, re.I)
-                if m:
-                    pdf_url = m.group(1)
-                    if not pdf_url.startswith("http"):
-                        pdf_url = "https:" + pdf_url
-                    async with session.get(pdf_url, timeout=30) as pdf_resp:
-                        if pdf_resp.status == 200:
-                            return await pdf_resp.read()
     except Exception as e:
-        print(f"[RAG] Sci-Hub error for {doi}: {e}")
+        log_error(stage="rag_fetch_pdf", message=f"Unexpected error for {doi}: {e}", exc_info=e)
+        print(f"[RAG] Error fetching PDF for {doi}: {e}")
 
     return None
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> dict[str, str | list[dict]]:
-    """Извлекает текст из PDF с разбивкой по страницам."""
+    """Извлекает текст из PDF с помощью PyMuPDF (fitz)."""
     result = {
         "full_text": "",
         "pages": [],
     }
 
-    # Пробуем PyMuPDF (быстрее и точнее)
     try:
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
         for page_num in range(len(pdf)):
@@ -131,22 +118,8 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> dict[str, str | list[dict]]:
                 result["full_text"] += "\n\n" + page_text
         pdf.close()
         return result
-    except Exception:
-        pass
-
-    # Fallback: PyPDF2
-    try:
-        pdf = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
-        for page_num, page in enumerate(pdf.pages):
-            page_text = page.extract_text() or ""
-            if page_text.strip():
-                result["pages"].append({
-                    "num": page_num + 1,
-                    "text": page_text.strip()
-                })
-                result["full_text"] += "\n\n" + page_text
-        return result
     except Exception as e:
+        log_error(stage="rag_pdf_extract", message=f"PyMuPDF extraction error: {e}", exc_info=e)
         print(f"[RAG] PDF extraction error: {e}")
         return result
 
@@ -217,7 +190,6 @@ def find_relevant_chunks(
         if not chunk_words:
             continue
 
-        # Пересечение слов
         intersection = len(query_words & chunk_words)
         union = len(query_words | chunk_words)
         score = intersection / union if union > 0 else 0
@@ -229,7 +201,6 @@ def find_relevant_chunks(
             score=score
         )))
 
-    # Сортируем по релевантности
     scored.sort(key=lambda x: x[0], reverse=True)
     return [chunk for score, chunk in scored[:top_k] if score > 0.1]
 
@@ -240,18 +211,10 @@ async def build_rag_context(
     literature: str,
     session: aiohttp.ClientSession | None = None,
 ) -> dict[str, list[Chunk]]:
-    """Строит RAG-контекст для всех разделов работы.
-
-    Возвращает: {
-        "intro": [Chunk, ...],
-        "ch1": [Chunk, ...],
-        ...
-    }
-    """
+    """Строит RAG-контекст для всех разделов работы."""
     if not literature:
         return {}
 
-    # Извлекаем DOI из списка литературы
     dois = re.findall(r"10\.\d{4,9}/\S+", literature)
     if not dois:
         print("[RAG] Не найдено DOI в списке литературы")
@@ -265,8 +228,7 @@ async def build_rag_context(
         own_session = True
 
     try:
-        # Скачиваем тексты статей параллельно
-        tasks = [download_and_extract_text(session, doi) for doi in dois[:5]]  # ограничиваем 5 статьями для скорости
+        tasks = [download_and_extract_text(session, doi) for doi in dois[:5]]
         texts = await asyncio.gather(*tasks, return_exceptions=True)
 
         full_texts = []
@@ -278,10 +240,8 @@ async def build_rag_context(
             print("[RAG] Не удалось загрузить ни одной статьи")
             return {}
 
-        # Объединяем все тексты
         combined = "\n\n".join(full_texts)
 
-        # Для каждого раздела ищем релевантные фрагменты
         sections = {
             "intro": f"актуальность цель задачи объект предмет {topic}",
             "ch1": f"теоретические основы концепции термины {topic}",

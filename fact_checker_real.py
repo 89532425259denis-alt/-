@@ -9,6 +9,12 @@ from urllib.parse import quote_plus
 
 import aiohttp
 
+try:
+    from error_logger import log_error
+except ImportError:
+    def log_error(*args, **kwargs):
+        pass
+
 
 class RealFactChecker:
     """Проверяет факты через поиск в интернете."""
@@ -29,7 +35,6 @@ class RealFactChecker:
         if len(statement) < 20:
             return True, "слишком короткое утверждение"
 
-        # Извлекаем ключевые слова
         keywords = self._extract_keywords(statement)
         if not keywords:
             return True, "нет ключевых слов"
@@ -37,7 +42,6 @@ class RealFactChecker:
         query = " ".join(keywords[:5])
 
         try:
-            # DuckDuckGo API
             url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&no_html=1"
             async with self.session.get(url, timeout=10) as resp:
                 if resp.status != 200:
@@ -47,17 +51,20 @@ class RealFactChecker:
                 if not snippet:
                     return True, "информация не найдена"
 
-                # Проверяем, подтверждается ли утверждение
                 statement_words = set(keywords)
                 snippet_words = set(self._extract_keywords(snippet))
 
-                # Если есть пересечение ключевых слов — факт подтверждается
                 if len(statement_words & snippet_words) >= 2:
                     return True, "подтверждается"
                 else:
                     return False, "не подтверждается"
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log_error(stage="fact_checker_real_search", message=f"DuckDuckGo API network error: {e}", exc_info=e)
+            print(f"[FACT-CHECK] Ошибка сети проверки: {e}")
+            return True, "проверка недоступна"
         except Exception as e:
-            print(f"[FACT-CHECK] Ошибка проверки: {e}")
+            log_error(stage="fact_checker_real_search", message=f"Unexpected error: {e}", exc_info=e)
+            print(f"[FACT-CHECK] Неожиданная ошибка: {e}")
             return True, "проверка недоступна"
 
     def _extract_keywords(self, text: str) -> list[str]:
@@ -71,7 +78,6 @@ class RealFactChecker:
         words = re.findall(r"[а-яёa-z]{4,}", text.lower())
         keywords = [w for w in words if w not in stopwords and len(w) >= 4]
 
-        # Убираем дубликаты
         seen = set()
         result = []
         for w in keywords:
@@ -82,7 +88,6 @@ class RealFactChecker:
 
     async def validate_facts_in_text(self, text: str, topic: str = "") -> list[dict]:
         """Проверяет все факты в тексте."""
-        # Ищем предложения с потенциальными фактами
         fact_patterns = [
             r"\b\d+%?\s*[а-яё]+\b",  # проценты
             r"\b(?:в|с|на|до|около|более|менее)\s+\d+\s+(?:год|лет|раз|проц)",  # числа
@@ -101,12 +106,10 @@ class RealFactChecker:
             if not has_fact:
                 continue
 
-            # Проверяем, есть ли ссылка на источник
             has_citation = bool(re.search(r"\[\d+,?\s*с\.\s*\d+\]", sent))
             if has_citation:
-                continue  # факт со ссылкой считаем проверенным
+                continue
 
-            # Проверяем факт через интернет
             verified, reason = await self.verify_fact(sent)
 
             results.append({

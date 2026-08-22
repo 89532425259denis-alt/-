@@ -8,12 +8,17 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import re
 from typing import Any
 
 import aiohttp
 import fitz  # PyMuPDF
+
+try:
+    from error_logger import log_error
+except ImportError:
+    def log_error(*args, **kwargs):
+        pass
 
 
 class FullTextRAG:
@@ -36,14 +41,8 @@ class FullTextRAG:
         if doi in self.cache:
             return self.cache[doi]
 
-        # 1. Пробуем Unpaywall
+        # Пробуем Unpaywall (Официальный Open Access API)
         text = await self._fetch_via_unpaywall(doi)
-        if text:
-            self.cache[doi] = text
-            return text
-
-        # 2. Пробуем через DOI.org → переадресация на издателя
-        text = await self._fetch_via_publisher(doi)
         if text:
             self.cache[doi] = text
             return text
@@ -68,40 +67,17 @@ class FullTextRAG:
                         return None
                     pdf_bytes = await pdf_resp.read()
                     return self._extract_text_from_pdf(pdf_bytes)
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            log_error(stage="rag_full_unpaywall", message=f"Unpaywall error for {doi}: {e}", exc_info=e)
             print(f"[RAG-FULL] Unpaywall error: {e}")
             return None
-
-    async def _fetch_via_publisher(self, doi: str) -> str | None:
-        """Скачивает через издателя (если есть открытый доступ)."""
-        try:
-            # Пробуем через Sci-Hub как резерв
-            url = f"https://sci-hub.se/{doi}"
-            async with self.session.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                if resp.status != 200:
-                    return None
-                html = await resp.text()
-
-                # Ищем ссылку на PDF
-                m = re.search(r'<embed[^>]+src=["\']([^"\']+\.pdf)["\']', html, re.I)
-                if not m:
-                    return None
-
-                pdf_url = m.group(1)
-                if not pdf_url.startswith("http"):
-                    pdf_url = "https:" + pdf_url
-
-                async with self.session.get(pdf_url, timeout=30) as pdf_resp:
-                    if pdf_resp.status != 200:
-                        return None
-                    pdf_bytes = await pdf_resp.read()
-                    return self._extract_text_from_pdf(pdf_bytes)
         except Exception as e:
-            print(f"[RAG-FULL] Publisher error: {e}")
+            log_error(stage="rag_full_unpaywall", message=f"Unexpected error for {doi}: {e}", exc_info=e)
+            print(f"[RAG-FULL] Unexpected error: {e}")
             return None
 
     def _extract_text_from_pdf(self, pdf_bytes: bytes) -> str | None:
-        """Извлекает полный текст из PDF."""
+        """Извлекает полный текст из PDF с помощью PyMuPDF (fitz)."""
         try:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             text_parts = []
@@ -115,10 +91,10 @@ class FullTextRAG:
                 return None
 
             full_text = "\n\n".join(text_parts)
-            # Очищаем от мусора
             full_text = re.sub(r"\n{3,}", "\n\n", full_text)
             return full_text
         except Exception as e:
+            log_error(stage="rag_full_pdf_extract", message=f"PDF extraction error: {e}", exc_info=e)
             print(f"[RAG-FULL] PDF extraction error: {e}")
             return None
 
@@ -131,7 +107,6 @@ class FullTextRAG:
     ) -> str:
         """Генерирует текст, ОПИРАЯСЬ ТОЛЬКО на загруженные статьи."""
 
-        # Извлекаем DOI
         dois = re.findall(r"10\.\d{4,9}/\S+", literature)
         if not dois:
             print("[RAG-FULL] Нет DOI для загрузки")
@@ -139,7 +114,6 @@ class FullTextRAG:
 
         print(f"[RAG-FULL] Загружаю {len(dois[:3])} статей...")
 
-        # Загружаем тексты статей
         texts = []
         for doi in dois[:3]:  # максимум 3 статьи для скорости
             text = await self.fetch_full_text(doi)
@@ -153,7 +127,6 @@ class FullTextRAG:
 
         source_text = "\n\n".join(texts)
 
-        # Генерируем текст на основе источников
         prompt = f"""
         Тема работы: {topic}
 
