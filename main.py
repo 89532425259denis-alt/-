@@ -415,12 +415,20 @@ def cfg(name: str, default: str = "") -> str:
 
 
 BOT_TOKEN = cfg("BOT_TOKEN")
-# if not BOT_TOKEN:
-    # raise SystemExit("❌ ОШИБКА: не вставлен BOT_TOKEN (в TOKENS, .env или bot_config.json)")
-
 OPENROUTER_KEY = cfg("OPENROUTER_KEY")
 DEEPSEEK_KEY   = cfg("DEEPSEEK_KEY")
 GROQ_KEY       = cfg("GROQ_KEY")
+
+
+def check_config():
+    bot_tok = cfg("BOT_TOKEN")
+    if not bot_tok and os.getenv("TESTING") != "1":
+        print("[CONFIG WARN] BOT_TOKEN не задан в окружении или конфиге")
+    if not cfg("OPENROUTER_KEY") and not cfg("DEEPSEEK_KEY") and os.getenv("TESTING") != "1":
+        print("[CONFIG WARN] Нужен хотя бы один LLM-ключ (OPENROUTER_KEY или DEEPSEEK_KEY)")
+
+
+check_config()
 
 OPENROUTER_BASE_URL = cfg("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 DEEPSEEK_BASE_URL   = cfg("DEEPSEEK_BASE_URL",   "https://api.deepseek.com/v1").rstrip("/")
@@ -546,6 +554,7 @@ MAX_PARALLEL_PER_USER = max(0, int(cfg("MAX_PARALLEL_PER_USER", "2")))
 # в минус и лимит MAX_PARALLEL_PER_USER переставал работать.
 _active_gen_per_user: dict[int, int] = {}
 _active_gen_lock = asyncio.Lock()
+_generation_status: dict[str, str] = {}  # gen_id -> "generating" | "ready"
 
 
 async def _gen_slot_acquire(uid: int) -> bool:
@@ -1441,19 +1450,18 @@ def _match_citations_to_sources(
         best_idx, best_score, best_source = scores[0]
 
         if best_score >= 2:
-            if not re.search(r"\[\d+\s*,\s*[сСcC]\.\s*\d+\]", para):
-                page = 10 + (best_idx * 7) % 50
+            if not re.search(r"\[\d+(?:\s*,\s*[сСcC]\.\s*\d+)?\]", para):
                 if para.endswith("."):
-                    para = para[:-1] + f" [{best_idx}, с. {page}]."
+                    para = para[:-1] + f" [{best_idx}]."
                 else:
-                    para = para + f" [{best_idx}, с. {page}]."
+                    para = para + f" [{best_idx}]."
                 paragraphs[para_idx] = para
 
     return "\n\n".join(paragraphs)
 
 
 def _final_citation_check(parts: dict) -> dict:
-    """Проверяет, что все ссылки имеют формат [N, с. X]."""
+    """Проверяет ссылки, сохраняя [N] без выдуманных страниц."""
     for key, text in parts.items():
         if key == "literature":
             continue
@@ -1468,9 +1476,9 @@ def _final_citation_check(parts: dict) -> dict:
 
             def _fix_bare(m: re.Match) -> str:
                 n = m.group(1)
-                if n in page_map:
+                if n in page_map and page_map[n]:
                     return f"[{n}, с. {page_map[n]}]"
-                return f"[{n}, с. {10 + (int(n) * 7) % 50}]"
+                return f"[{n}]"
 
             parts[key] = re.sub(r"\[\s*(\d+)\s*\]", _fix_bare, text)
 
@@ -13510,8 +13518,19 @@ async def h_pre_checkout(q: PreCheckoutQuery) -> None:
 @dp.message(F.successful_payment)
 async def h_payment_ok(message: Message, state: FSMContext) -> None:
     try:
+        charge_id = message.successful_payment.telegram_payment_charge_id
+        gen_id = f"gen_{message.from_user.id}_{charge_id}"
+        if _generation_status.get(gen_id) in ("generating", "ready"):
+            await message.answer("⏳ Ваша работа уже обрабатывается, пожалуйста, подождите.", parse_mode="HTML")
+            return
+        _generation_status[gen_id] = "generating"
+    except Exception as e:
+        print(f"[Payment Idempotency Error] {e}")
+
+    try:
         payload   = json.loads(message.successful_payment.invoice_payload)
-    except Exception:
+    except Exception as e:
+        print(f"[Payload Parse Error] {e}")
         payload = {}
 
     # ── Оплата режима редактирования ──
