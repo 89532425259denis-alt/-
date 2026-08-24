@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from prompts import rewrite_to_human_style
 
 # ──────────────────────────────────────────────────────────────────────
 #  Защита служебных конструкций
@@ -580,3 +581,67 @@ def humanize(text: str, *, aggressive: bool = True) -> str:
     if aggressive:
         out = vary_rhythm(out)
     return normalize_typography(out)
+
+
+async def rewrite_with_model(text: str, topic: str, model_key: str, chat_fn) -> str:
+    """Переписывает текст в человеческом стиле через модель."""
+    if not text or len(text) < 200:
+        return text
+
+    score = ai_score(text)
+    if score < 20:
+        return text
+
+    messages = [
+        {"role": "system", "content": "You are an editor. Rewrite the text in a natural human style."},
+        {"role": "user", "content": rewrite_to_human_style(text)}
+    ]
+
+    new_text, _ = await chat_fn(model_key, messages, max_tokens=4096)
+
+    if not new_text or len(new_text) < len(text) * 0.6:
+        return text
+
+    if not citations_preserved(text, new_text):
+        return text
+
+    new_score = ai_score(new_text)
+    if new_score > score - 5:
+        return text
+
+    print(f"[HUMANIZER] Рерайт улучшил текст: {score} → {new_score}")
+    return new_text
+
+
+def apply_human_style_safe(text: str) -> str:
+    """Применяет человеческий стиль ТОЛЬКО через безопасные замены (без модели)."""
+    if not text:
+        return text
+
+    text = remove_cliches(text)
+    text = vary_rhythm(text)
+    text = normalize_typography(text)
+
+    text = text.replace("—", " - ")
+    text = re.sub(r"\s+-\s+", " - ", text)
+
+    forbidden_words = [
+        "can", "may", "just", "that", "very", "really", "literally", "actually",
+        "certainly", "probably", "basically", "could", "maybe", "delve", "embark",
+        "enlightening", "esteemed", "shed light", "craft", "crafting", "imagine",
+        "realm", "game-changer", "unlock", "discover", "skyrocket", "abyss",
+        "not alone", "in a world where", "revolutionize", "disruptive", "utilize",
+        "utilizing", "dive deep", "tapestry", "illuminate", "unveil", "pivotal",
+        "intricate", "elucidate", "hence", "furthermore", "however", "harness",
+        "exciting", "groundbreaking", "cutting-edge", "remarkable", "glimpse into",
+        "navigating", "landscape", "stark", "testament", "in summary", "in conclusion",
+        "moreover", "boost", "skyrocketing", "opened up", "powerful", "inquiries",
+        "ever-evolving"
+    ]
+
+    for word in forbidden_words:
+        text = re.sub(rf"\b{word}\b", "", text, flags=re.IGNORECASE)
+
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
