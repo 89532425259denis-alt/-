@@ -1504,17 +1504,8 @@ async def deep_paraphrase(text: str, topic: str, model_key: str = FREE_MODEL_KEY
 
 
 def _validate_user_literature(content: str) -> tuple[bool, str]:
-    """Проверяет пользовательский список литературы."""
-    lines = [l.strip() for l in content.split("\n") if l.strip()]
-
-    if len(lines) < 3:
-        return False, "❌ Слишком мало источников. Введите минимум 3."
-
-    has_content = any(re.search(r"[А-Яа-яёA-Za-z]{4,}", l) for l in lines)
-    if not has_content:
-        return False, "❌ Список похож на мусор. Введите реальные источники."
-
-    return True, ""
+    """Проверяет пользовательский список литературы, делегируя в FileProcessor."""
+    return FileProcessor.validate_user_literature(content)
 
 
 def sanitize_llm_text(raw: str) -> str:
@@ -2927,17 +2918,8 @@ def _fallback_bibliography_for_topic(topic: str, subject: str, start: int = 1, l
 
 
 def _ensure_min_bibliography(bib_text: str, topic: str, subject: str, *, min_sources: int = 10, limit: int = 20) -> str:
-    """Гарантирует минимум min_sources в списке литературы без выдуманных строк."""
-    bib = _normalize_bibliography(bib_text or "")
-    if _count_sources(bib) >= min_sources:
-        return bib
-    need = min(limit, max(min_sources, MIN_REAL_SOURCES))
-    fallback = _fallback_bibliography_for_topic(topic, subject, start=1, limit=need)
-    combined = _combine_bibliographies(bib, fallback, limit=limit)
-    combined = _normalize_bibliography(combined)
-    if _count_sources(combined) < min_sources:
-        print(f"[LIT] 🚨 Не удалось добрать {min_sources} источников даже резервом; факт={_count_sources(combined)}")
-    return combined
+    """Возвращает проверенный список источников из каталогов без добивки шаблонными записями."""
+    return _normalize_bibliography(bib_text or "")
 
 
 def _numeric_topic_key(topic: str, subject: str) -> str:
