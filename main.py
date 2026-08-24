@@ -11,6 +11,7 @@ from context_manager import ContextManager
 from structure_generator import StructureGenerator
 from chapter_generator import ChapterGenerator
 from post_processor import PostProcessor
+from file_processor import FileProcessor
 
 # ============================================================================
 # Openverse Auto-Refresh Token (из client credentials)
