@@ -28,6 +28,11 @@ def match_citations_to_sources(
     min_confidence: float = 0.15,
 ) -> str:
     """Привязывает ссылки к источникам по ключевым словам."""
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+    if not isinstance(literature, str):
+        literature = str(literature) if literature is not None else ""
+
     if not text or not literature:
         return text
 
@@ -87,6 +92,8 @@ def match_citations_to_sources(
 
 def final_citation_check(parts: dict) -> dict:
     """Проверяет, что все ссылки имеют формат [N, с. X]."""
+    if not isinstance(parts, dict):
+        return parts
     for key, text in parts.items():
         if key == "literature" or not isinstance(text, str):
             continue
