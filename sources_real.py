@@ -587,7 +587,13 @@ def relevance(rec: SourceRecord, topic_tokens: set[str]) -> float:
     hay = _tokens(rec.title + " " + rec.container)
     if not hay:
         return 0.0
-    return len(topic_tokens & hay) / len(topic_tokens)
+
+    # Требуем совпадения хотя бы 1 ключевого токена из темы
+    match_count = len(topic_tokens & hay)
+    if match_count == 0:
+        return 0.0
+
+    return match_count / len(topic_tokens)
 
 
 def _query_variants(topic: str, keywords: str = "") -> list[str]:
