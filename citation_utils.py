@@ -110,7 +110,7 @@ def final_citation_check(parts: dict) -> dict:
                 n = m.group(1)
                 if n in page_map:
                     return f"[{n}, с. {page_map[n]}]"
-                return f"[{n}, с. {10 + (int(n) * 7) % 50}]"
+                return f"[{n}]"
 
             parts[key] = re.sub(r"\[\s*(\d+)\s*\]", _fix_bare, text)
 
