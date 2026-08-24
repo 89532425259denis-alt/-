@@ -2002,11 +2002,11 @@ def _keywords_for_relevance(text: str) -> set[str]:
 
 
 def _topic_required_terms_match(record: dict, topic: str) -> bool:
-    """Жёсткая проверка для тем с именами/узкими объектами.
+    """Жёсткая проверка для тем с именами, объектами и географией.
 
-    Без неё OpenAlex/Crossref по длинной русской теме «...под влиянием...»
-    часто возвращали случайные статьи про любые «изменения под влиянием»,
-    из-за чего в списке литературы появлялись биология, медицина и т.п.
+    Отбрасывает источники, не содержащие обязательных ключевых слов темы или географии,
+    чтобы исключить попадение сторонних статей (например, статьи про Таганрог или Красноярск
+    для темы про Псков/Любятово).
     """
     low_topic = (topic or "").lower()
     if not low_topic:
@@ -2015,6 +2015,7 @@ def _topic_required_terms_match(record: dict, topic: str) -> bool:
         "title", "container", "publisher", "concepts", "subjects", "url", "doi"
     )).lower()
 
+    # 1. Специфическая проверка имен/политики
     if "трамп" in low_topic or "trump" in low_topic:
         has_trump = ("trump" in haystack) or ("трамп" in haystack)
         if any(x in low_topic for x in ("торгов", "trade", "тариф", "пошлин")):
@@ -2025,7 +2026,27 @@ def _topic_required_terms_match(record: dict, topic: str) -> bool:
             return has_trump and any(t in haystack for t in trade_terms)
         return has_trump
 
-    return True
+    # 2. Обязательные уникальные термины и географические названия
+    stopwords = {
+        'работа', 'исследование', 'анализ', 'роль', 'значение',
+        'особенности', 'проблемы', 'вопросы', 'современный',
+        'развитие', 'система', 'метод', 'подход', 'основы',
+        'эволюция', 'характеристика', 'тенденции', 'условиях'
+    }
+    raw_words = set(re.findall(r'[а-яёa-z]{4,}', low_topic))
+    required_words = {w for w in raw_words if w not in stopwords}
+
+    # Географические названия (обязательные anchor-слова)
+    geo_anchors = set(re.findall(r'(псков|любятово|москва|новгород|таганрог|красноярск|спб|петербург)', low_topic))
+    for geo in geo_anchors:
+        required_words.add(geo)
+
+    if not required_words:
+        return True
+
+    matched = [w for w in required_words if w in haystack]
+    # Должна совпадать хотя бы половина обязательных ключевых слов/географии
+    return len(matched) >= max(1, len(required_words) // 2)
 
 
 def _source_relevance_score(record: dict, topic: str, subject: str) -> int:
@@ -3895,19 +3916,24 @@ async def generate_text_blocks(
             {"role": "user",   "content": prompt},
         ]
 
+        # RAG-режим: если пользователь загрузил свой файл или источники
+        if _rag_sources and key != "literature":
+            messages.append({
+                "role": "system",
+                "content": (
+                    "ВАЖНО: Используй ТОЛЬКО информацию из предоставленных ниже источников. "
+                    "Если информации недостаточно — прямо укажи 'Данных недостаточно для полного освещения этого аспекта.'\n"
+                    "Источники для работы:\n" + _rag_sources[:3000]
+                )
+            })
+
         # Список литературы лучше брать из реальных каталогов, а не просить
         # модель «вспомнить» источники: так меньше выдуманных книг и DOI.
         if key == "literature" and verified_bib:
             text = verified_bib
             used_model = model_key
-            # RAG-режим: если есть источники, добавляем строгий промпт
-            if _rag_sources and key not in ("literature",):
-                _rag_prompt_note = (
-                    "\n\nВАЖНО: Используй ТОЛЬКО информацию из предоставленных ниже источников. "
-                    "Если информации нет — напиши 'Данных недостаточно для полного освещения этого аспекта.'\n"
-                    "Источники для этой работы:\n" + _rag_sources[:3000]
-                )
-        text, used_model = await chat_with_fallback(model_key, messages, max_tok)
+        else:
+            text, used_model = await chat_with_fallback(model_key, messages, max_tok)
 
         if prog and used_model and used_model != model_key:
             await prog.update(model_name=AI_MODELS.get(used_model, {}).get("name", used_model))
@@ -12806,37 +12832,26 @@ async def _continue_after_image_choice(cb: CallbackQuery, state: FSMContext) -> 
             return
 
         await state.update_data(humanize=False)
-        await cb.message.edit_text(
-            "🚀 <b>Запускаю генерацию...</b>\n\n"
-            "Текст будет без опечаток, markdown-маркеров и фраз-маркеров ИИ.",
-            parse_mode="HTML",
-        )
-        await cb.answer()
-        await generate_and_send(cb.message, state, model_key=FREE_MODEL_KEY, pay_mode="free")
-        return
 
     # ── Платный режим ──
-    ok, reason = check_user_limit(cb.from_user.id, "paid")
-    if not ok and not is_vip(cb.from_user.id):
-        await cb.message.edit_text(reason, parse_mode="HTML")
-        await state.clear()
-        await cb.answer()
-        return
+    else:
+        ok, reason = check_user_limit(cb.from_user.id, "paid")
+        if not ok and not is_vip(cb.from_user.id):
+            await cb.message.edit_text(reason, parse_mode="HTML")
+            await state.clear()
+            await cb.answer()
+            return
 
-    await state.update_data(humanize=False)
-    image_note = (
-        f"\n🖼 Изображения включены: +{IMAGES_EXTRA_PRICE_PER_PAGE}⭐/стр."
-        if include_images else "\n📄 Изображения отключены."
-    )
+        await state.update_data(humanize=False)
+
+    # ── Выбор формата перед генерацией ──
     await cb.message.edit_text(
-        "🤖 <b>Выберите ИИ-модель</b>\n\n"
-        "Цена указана в звёздах Telegram за страницу.\n"
-        "Текст будет без опечаток, markdown-маркеров и фраз-маркеров ИИ."
-        f"{image_note}",
-        reply_markup=with_back(kb_models()),
+        "📦 <b>Выберите формат готовой работы:</b>\n\n"
+        "⚠️ <b>ВНИМАНИЕ!</b> ИИ генерирует черновик работы, который требует вашей обязательной личной проверки!",
         parse_mode="HTML",
+        reply_markup=kb_output_format(),
     )
-    await state.set_state(WorkState.model)
+    await state.set_state(WorkState.output_format)
     await cb.answer()
 
 
