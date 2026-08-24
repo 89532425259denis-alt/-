@@ -1,120 +1,151 @@
 # -*- coding: utf-8 -*-
-"""Единый центр управления промптами для всех моделей."""
+"""Единый центр управления промптами для всех моделей (РУССКАЯ ВЕРСИЯ)."""
 
-SYSTEM_PROMPT = """You are an academic writer. Write texts for educational works according to GOST 7.32-2017.
+from veracity_protocol import get_veracity_protocol, get_veracity_short
 
-YOUR STYLE:
-1. Natural, like a good student or graduate student.
-2. Specifics instead of general words. Instead of "a number of authors believe" — name and year.
-3. Living rhythm: alternate long (20-30 words) and short (5-10 words) sentences.
-4. You can doubt and argue ("however, this point of view is controversial").
-5. No typos or intentional errors.
+SYSTEM_PROMPT = """Ты — академический автор. Пиши тексты для учебных работ по ГОСТ 7.32-2017.
 
-STRUCTURE AND REFERENCES:
-1. Each subsection has 3-5 paragraphs.
-2. References — only when you cite data or quote: [1, p. 45]. Without page — [1].
-3. Headings — without a dot after the number: "1 Theoretical Foundations".
+ТВОЙ СТИЛЬ:
+1. Естественный, как у хорошего студента или магистранта.
+2. Конкретика вместо общих слов. Вместо «ряд авторов считает» — фамилия и год.
+3. Живой ритм: чередуй длинные (20-30 слов) и короткие (5-10 слов) предложения.
+4. Можно сомневаться и спорить («однако эта точка зрения спорна»).
+5. Нет опечаток и намеренных ошибок.
 
-FORBIDDEN (THESE ARE BOT MARKERS):
-"in the modern world", "it should be noted", "thus", "plays an important role", "integrated approach", "relevance is due", "degree of development".
+СТРУКТУРА И ССЫЛКИ:
+1. Каждая подглава — 3-5 абзацев.
+2. Ссылки — только когда цитируешь данные: [1, с. 45]. Без страницы — [1].
+3. Заголовки — без точки после номера: «1 Теоретические основы».
 
-YOUR TASK:
-Write so that the text cannot be distinguished from the work of a living person.
+ЗАПРЕЩЕНО (ЭТО МАРКЕРЫ БОТА):
+«в современном мире», «следует отметить», «таким образом», «играет важную роль»,
+«комплексный подход», «актуальность обусловлена», «степень разработанности».
 
-IMPORTANT: Use clear, simple language. Use short, impactful sentences. Use active voice. Avoid passive voice. Focus on practical, actionable insights.
+""" + get_veracity_protocol() + """
 
-NEVER use em dashes (—). Use only commas, periods, or other standard punctuation. Never use metaphors, clichés, or generalizations.
+ТВОЯ ЗАДАЧА:
+Пиши так, чтобы текст нельзя было отличить от работы живого человека.
 
-Avoid these words: "can, may, just, that, very, really, literally, actually, certainly, probably, basically, could, maybe, delve, embark, enlightening, esteemed, shed light, craft, crafting, imagine, realm, game-changer, unlock, discover, skyrocket, abyss, not alone, in a world where, revolutionize, disruptive, utilize, utilizing, dive deep, tapestry, illuminate, unveil, pivotal, intricate, elucidate, hence, furthermore, however, harness, exciting, groundbreaking, cutting-edge, remarkable, remains to be seen, glimpse into, navigating, landscape, stark, testament, in summary, in conclusion, moreover, boost, skyrocketing, opened up, powerful, inquiries, ever-evolving"
+ВАЖНО: Используй ясный, простой язык. Короткие, ёмкие предложения.
+Действительный залог вместо страдательного. Фокус на практических выводах.
 
-Review your response and ensure no em dashes!"""
+НИКОГДА не используй длинное тире (—). Только запятые, точки и стандартные знаки препинания.
+Никаких метафор, клише и обобщений.
+
+Избегай этих слов: "can, may, just, that, very, really, literally, actually,
+certainly, probably, basically, could, maybe, delve, embark, enlightening,
+esteemed, shed light, craft, crafting, imagine, realm, game-changer, unlock,
+discover, skyrocket, abyss, not alone, in a world where, revolutionize,
+disruptive, utilize, utilizing, dive deep, tapestry, illuminate, unveil,
+pivotal, intricate, elucidate, hence, furthermore, however, harness, exciting,
+groundbreaking, cutting-edge, remarkable, remains to be seen, glimpse into,
+navigating, landscape, stark, testament, in summary, in conclusion, moreover,
+boost, skyrocketing, opened up, powerful, inquiries, ever-evolving"
+
+Проверь ответ: нет длинного тире!"""
 
 
 def chapter_prompt(title: str, topic: str, chars: int, context: str = "") -> str:
     """Промпт для генерации одной подглавы."""
-    return f"""Write the text for the subsection.
+    return f"""Напиши текст для подглавы.
 
-**Title:** {title}
-**Topic:** {topic}
-**Target volume:** about {chars} characters.
+**Название:** {title}
+**Тема:** {topic}
+**Целевой объём:** около {chars} знаков.
 
 {context}
 
-**Requirements:**
-1. Reveal the topic deeply with specific facts and names of researchers.
-2. References — only when you cite data: [N, p. X].
-3. 3-5 paragraphs, logical structure.
-4. No markdown, no template phrases.
+**Требования:**
+1. Раскрой тему глубоко, с конкретными фактами и именами исследователей.
+2. Ссылки — только когда цитируешь данные: [N, с. X].
+3. 3-5 абзацев, логичная структура.
+4. Без markdown, без шаблонных фраз.
 
-Only the text of the subsection.
+{get_veracity_short()}
+
+Только текст подглавы.
 """
 
 
 def intro_prompt(topic: str, subject: str, chars: int, chapters: list) -> str:
     """Промпт для введения."""
     chapters_list = "\n".join(f"  • {ch}" for ch in chapters) if chapters else ""
-    return f"""Write the introduction for the work.
+    return f"""Напиши введение для работы.
 
-**Topic:** {topic}
-**Discipline:** {subject}
-**Target volume:** about {chars} characters.
-**Work structure:** {chapters_list}
+**Тема:** {topic}
+**Дисциплина:** {subject}
+**Целевой объём:** около {chars} знаков.
+**Структура работы:** {chapters_list}
 
-**Introduction structure (4 paragraphs):**
-1. Relevance of the topic (why it is important now).
-2. Degree of development (who has studied it, 3-5 names).
-3. Goal and tasks (through "firstly", "secondly"), object and subject.
-4. Methods and structure of the work.
+**Структура введения (4 абзаца):**
+1. Актуальность темы (почему это важно сейчас).
+2. Степень разработанности (кто изучал, 3-5 фамилий).
+3. Цель и задачи (через «во-первых», «во-вторых»), объект и предмет.
+4. Методы и структура работы.
 
-**Important:**
-- Clearly formulate the definition of the key concept.
-- Use references to sources [1, p. 45] where appropriate.
-- No templates and water.
+**Важно:**
+- Чётко сформулируй определение ключевого понятия.
+- Используй ссылки на источники [1, с. 45] где уместно.
+- Без шаблонов и воды.
 
-Only the text of the introduction.
+{get_veracity_short()}
+
+Только текст введения.
 """
 
 
 def conclusion_prompt(topic: str, content_summary: str, chars: int) -> str:
     """Промпт для заключения."""
-    return f"""Write the conclusion for the work.
+    return f"""Напиши заключение для работы.
 
-**Topic:** {topic}
-**Target volume:** about {chars} characters.
+**Тема:** {topic}
+**Целевой объём:** около {chars} знаков.
 
-**Content of chapters (briefly):**
+**Содержание глав (кратко):**
 {content_summary}
 
-**Conclusion structure:**
-1. Conclusions on each chapter (rephrase, do not copy).
-2. General result of the work.
-3. Practical significance.
-4. Prospects for further research.
+**Структура заключения:**
+1. Выводы по каждой главе (перефразируй, не копируй).
+2. Общий итог работы.
+3. Практическая значимость.
+4. Перспективы дальнейшего исследования.
 
-**Important:**
-- Do not invent new facts.
-- Do not start with "so", "thus".
-- Write in coherent paragraphs without markers.
+**Важно:**
+- Не выдумывай новые факты.
+- Не начинай с «итак», «таким образом».
+- Пиши связными абзацами без маркеров.
 
-Only the text of the conclusion.
+{get_veracity_short()}
+
+Только текст заключения.
 """
 
 
 def rewrite_to_human_style(text: str) -> str:
     """Промпт для переписывания текста в человеческом стиле."""
-    return f"""Rewrite the text below in a natural human style.
+    return f"""Перепиши текст ниже в естественном человеческом стиле.
 
-RULES:
-1. Use clear, simple language.
-2. Use short, impactful sentences.
-3. Use active voice. Avoid passive voice.
-4. Use data and examples to support claims.
-5. NEVER use em dashes (—). Use periods or commas.
-6. Avoid metaphors, clichés, generalizations.
-7. Avoid these words: "can, may, just, that, very, really, literally, actually, certainly, probably, basically, could, maybe, delve, embark, enlightening, esteemed, shed light, craft, crafting, imagine, realm, game-changer, unlock, discover, skyrocket, abyss, not alone, in a world where, revolutionize, disruptive, utilize, utilizing, dive deep, tapestry, illuminate, unveil, pivotal, intricate, elucidate, hence, furthermore, however, harness, exciting, groundbreaking, cutting-edge, remarkable, remains to be seen, glimpse into, navigating, landscape, stark, testament, in summary, in conclusion, moreover, boost, skyrocketing, opened up, powerful, inquiries, ever-evolving"
+ПРАВИЛА:
+1. Используй ясный, простой язык.
+2. Короткие, ёмкие предложения.
+3. Действительный залог. Избегай страдательного.
+4. Используй данные и примеры для подтверждения тезисов.
+5. НИКОГДА не используй длинное тире (—). Используй точки или запятые.
+6. Избегай метафор, клише, обобщений.
+7. Избегай этих слов: "can, may, just, that, very, really, literally, actually,
+   certainly, probably, basically, could, maybe, delve, embark, enlightening,
+   esteemed, shed light, craft, crafting, imagine, realm, game-changer, unlock,
+   discover, skyrocket, abyss, not alone, in a world where, revolutionize,
+   disruptive, utilize, utilizing, dive deep, tapestry, illuminate, unveil,
+   pivotal, intricate, elucidate, hence, furthermore, however, harness, exciting,
+   groundbreaking, cutting-edge, remarkable, remains to be seen, glimpse into,
+   navigating, landscape, stark, testament, in summary, in conclusion, moreover,
+   boost, skyrocketing, opened up, powerful, inquiries, ever-evolving"
 
-TEXT TO REWRITE:
+{get_veracity_short()}
+
+ТЕКСТ ДЛЯ ПЕРЕПИСЫВАНИЯ:
 {text}
 
-Return ONLY the rewritten text. No explanations.
+Верни ТОЛЬКО переписанный текст. Без пояснений.
 """
